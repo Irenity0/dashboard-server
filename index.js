@@ -24,7 +24,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
     const eventsCollection = client.db("control_panel").collection("events");
 
     // 🔹 GET all events
@@ -88,7 +87,6 @@ app.patch("/events/:id", async (req, res) => {
       return res.status(400).json({ message: "No fields provided to update" });
     }
 
-    // Perform partial update using $set
     const result = await eventsCollection.updateOne(
       { _id: new ObjectId(id) },
       { $set: updates }
@@ -113,12 +111,11 @@ app.patch("/events/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
-        // ✅ Check for valid ObjectId
+
         if (!ObjectId.isValid(id)) {
           return res.status(400).json({ message: "Invalid ID format" });
         }
 
-        // ✅ Destructure _id out of the update body
         const { _id, ...updatedData } = req.body;
 
         const result = await eventsCollection.updateOne(
