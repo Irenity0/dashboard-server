@@ -3,13 +3,21 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const morgan = require("morgan");
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const port = process.env.PORT || 5000;
 
 // middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173"],
+    credentials: true,
+  })
+);
 app.use(express.json());
+app.use(cookieParser());
 app.use(morgan("dev"));
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.5st1jdm.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -22,14 +30,43 @@ const client = new MongoClient(uri, {
   },
 });
 
+const verifyToken = (req, res, next) => {
+  const token = req?.cookies?.token;
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  jwt.verify(token, process.env.JWT_ACCESS_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
+
 async function run() {
   try {
     const eventsCollection = client.db("control_panel").collection("events");
 
+    app.post("/jwt", async (req, res) => {
+      const userInfo = req.body;
+
+      const token = jwt.sign(userInfo, process.env.JWT_ACCESS_SECRET, {
+        expiresIn: "2h",
+      });
+
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: false,
+      });
+
+      res.send({ success: true });
+    });
+
     // 🔹 GET all events
-    app.get("/events", async (req, res) => {
+    app.get("/events", verifyToken, async (req, res) => {
       try {
-        const { email } = req.query; 
+        const { email } = req.query;
 
         if (!email) {
           return res
@@ -46,13 +83,13 @@ async function run() {
       }
     });
 
-    app.get("/all/events", async (req,res) => {
-      const events = await eventsCollection.find().toArray()
-      res.send(events)
-    })
+    app.get("/all/events", verifyToken, async (req, res) => {
+      const events = await eventsCollection.find().toArray();
+      res.send(events);
+    });
 
     // 🔹 GET single event by ID
-    app.get("/events/:id", async (req, res) => {
+    app.get("/events/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const event = await eventsCollection.findOne({ _id: new ObjectId(id) });
@@ -64,53 +101,120 @@ async function run() {
     });
 
     // 🔹 POST new event
-    app.post("/events", async (req, res) => {
-      const newEvent = req.body;
-      const result = await eventsCollection.insertOne(newEvent);
-      res.status(201).json({ insertedId: result.insertedId });
+    app.post("/events",verifyToken, async (req, res) => {
+      const { recurrence, ...eventData } = req.body;
+      console.log(req.body);
+
+      const eventsToInsert = [];
+
+      const startDate = new Date(eventData.start);
+      const endDate = new Date(eventData.end);
+
+      const now = new Date();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day of current month
+
+      if (recurrence === "week") {
+        // Add event for every day starting from startDate for 7 days total
+        let current = new Date(startDate);
+
+        for (let i = 0; i < 7; i++) {
+          if (current < now) {
+            // skip past days, optional: or add anyway?
+            current.setDate(current.getDate() + 1);
+            continue;
+          }
+
+          const start = new Date(current);
+          const end = new Date(current);
+          end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
+
+          eventsToInsert.push({
+            ...eventData,
+            start,
+            end,
+          });
+
+          current.setDate(current.getDate() + 1);
+        }
+      } else if (recurrence === "month") {
+        // Add event for every day from startDate to end of this month
+        let current = new Date(startDate);
+
+        while (current <= monthEnd) {
+          if (current < now) {
+            current.setDate(current.getDate() + 1);
+            continue;
+          }
+
+          const start = new Date(current);
+          const end = new Date(current);
+          end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
+
+          eventsToInsert.push({
+            ...eventData,
+            start,
+            end,
+          });
+
+          current.setDate(current.getDate() + 1);
+        }
+      } else {
+        // Non-recurring: just insert once
+        eventsToInsert.push(eventData);
+      }
+
+      if (eventsToInsert.length === 0) {
+        return res
+          .status(400)
+          .json({ message: "No events to insert (dates in past?)" });
+      }
+
+      const result = await eventsCollection.insertMany(eventsToInsert);
+      console.log({ success: result });
+      res.status(201).json({
+        insertedCount: result.insertedCount,
+        insertedIds: result.insertedIds,
+      });
     });
 
     // 🔹 PATCH (partial update) event
-app.patch("/events/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    // Validate ObjectId
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid ID format" });
-    }
-
-    // Exclude _id from updates if present in body
-    const { _id, ...updates } = req.body;
-
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ message: "No fields provided to update" });
-    }
-
-    const result = await eventsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updates }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: "Event not found" });
-    }
-
-    res.status(200).json({ message: "Event updated successfully" });
-  } catch (error) {
-    console.error("Error patching event:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-
-    // 🔹 PUT (update) event
-    const { ObjectId } = require("mongodb");
-
-    app.put("/events/:id", async (req, res) => {
+    app.patch("/events/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
+        // Validate ObjectId
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid ID format" });
+        }
+
+        // Exclude _id from updates if present in body
+        const { _id, ...updates } = req.body;
+
+        if (Object.keys(updates).length === 0) {
+          return res
+            .status(400)
+            .json({ message: "No fields provided to update" });
+        }
+
+        const result = await eventsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updates }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Event not found" });
+        }
+
+        res.status(200).json({ message: "Event updated successfully" });
+      } catch (error) {
+        console.error("Error patching event:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.put("/events/:id", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
 
         if (!ObjectId.isValid(id)) {
           return res.status(400).json({ message: "Invalid ID format" });
@@ -135,7 +239,7 @@ app.patch("/events/:id", async (req, res) => {
     });
 
     // 🔹 DELETE event
-    app.delete("/events/:id", async (req, res) => {
+    app.delete("/events/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const result = await eventsCollection.deleteOne({
         _id: new ObjectId(id),
