@@ -104,7 +104,7 @@ async function run() {
     });
 
     // 🔹 POST new event
-    app.post("/events", verifyToken, async (req, res) => {
+    app.post("/events", async (req, res) => {
       const {
         recurrence,
         recurrencePattern,
