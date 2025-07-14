@@ -64,7 +64,7 @@ async function run() {
     });
 
     // 🔹 GET all events
-    app.get("/events", verifyToken, async (req, res) => {
+    app.get("/events", async (req, res) => {
       try {
         const { email } = req.query;
 
@@ -83,13 +83,13 @@ async function run() {
       }
     });
 
-    app.get("/all/events", verifyToken, async (req, res) => {
+    app.get("/all/events", async (req, res) => {
       const events = await eventsCollection.find().toArray();
       res.send(events);
     });
 
     // 🔹 GET single event by ID
-    app.get("/events/:id", verifyToken, async (req, res) => {
+    app.get("/events/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const event = await eventsCollection.findOne({ _id: new ObjectId(id) });
@@ -101,7 +101,7 @@ async function run() {
     });
 
     // 🔹 POST new event
-    app.post("/events",verifyToken, async (req, res) => {
+    app.post("/events", async (req, res) => {
       const { recurrence, ...eventData } = req.body;
       console.log(req.body);
 
@@ -178,7 +178,7 @@ async function run() {
     });
 
     // 🔹 PATCH (partial update) event
-    app.patch("/events/:id", verifyToken, async (req, res) => {
+    app.patch("/events/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -212,7 +212,7 @@ async function run() {
       }
     });
 
-    app.put("/events/:id", verifyToken, async (req, res) => {
+    app.put("/events/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -239,7 +239,7 @@ async function run() {
     });
 
     // 🔹 DELETE event
-    app.delete("/events/:id", verifyToken, async (req, res) => {
+    app.delete("/events/:id", async (req, res) => {
       const id = req.params.id;
       const result = await eventsCollection.deleteOne({
         _id: new ObjectId(id),
