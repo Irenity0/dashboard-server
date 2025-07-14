@@ -12,7 +12,10 @@ const port = process.env.PORT || 5000;
 // middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://irenity0-control-panel.vercel.app"],
+    origin: [
+      "http://localhost:5173",
+      "https://irenity0-control-panel.vercel.app",
+    ],
     credentials: true,
   })
 );
@@ -101,8 +104,13 @@ async function run() {
     });
 
     // 🔹 POST new event
-    app.post("/events", async (req, res) => {
-      const { recurrence, ...eventData } = req.body;
+    app.post("/events", verifyToken, async (req, res) => {
+      const {
+        recurrence,
+        recurrencePattern,
+        recurrenceCount = 1,
+        ...eventData
+      } = req.body;
       console.log(req.body);
 
       const eventsToInsert = [];
@@ -114,49 +122,96 @@ async function run() {
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day of current month
 
       if (recurrence === "week") {
-        // Add event for every day starting from startDate for 7 days total
-        let current = new Date(startDate);
+        if (recurrencePattern === "daily") {
+          // ✅ Your current style → add every day for 7 days
+          let current = new Date(startDate);
 
-        for (let i = 0; i < 7; i++) {
-          if (current < now) {
-            // skip past days, optional: or add anyway?
+          for (let i = 0; i < 7; i++) {
+            if (current < now) {
+              current.setDate(current.getDate() + 1);
+              continue;
+            }
+
+            const start = new Date(current);
+            const end = new Date(current);
+            end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
+
+            eventsToInsert.push({
+              ...eventData,
+              start,
+              end,
+            });
+
             current.setDate(current.getDate() + 1);
-            continue;
           }
+        } else if (recurrencePattern === "sameDay") {
+          // ✅ My style → recur on same day-of-week for X weeks
+          let current = new Date(startDate);
 
-          const start = new Date(current);
-          const end = new Date(current);
-          end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
+          for (let i = 0; i < recurrenceCount; i++) {
+            if (current < now) {
+              current.setDate(current.getDate() + 7);
+              continue;
+            }
 
-          eventsToInsert.push({
-            ...eventData,
-            start,
-            end,
-          });
+            const start = new Date(current);
+            const end = new Date(current);
+            end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
 
-          current.setDate(current.getDate() + 1);
+            eventsToInsert.push({
+              ...eventData,
+              start,
+              end,
+            });
+
+            current.setDate(current.getDate() + 7);
+          }
         }
       } else if (recurrence === "month") {
-        // Add event for every day from startDate to end of this month
-        let current = new Date(startDate);
+        if (recurrencePattern === "daily") {
+          // add every day from startDate to end of this month
+          let current = new Date(startDate);
 
-        while (current <= monthEnd) {
-          if (current < now) {
+          while (current <= monthEnd) {
+            if (current < now) {
+              current.setDate(current.getDate() + 1);
+              continue;
+            }
+
+            const start = new Date(current);
+            const end = new Date(current);
+            end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
+
+            eventsToInsert.push({
+              ...eventData,
+              start,
+              end,
+            });
+
             current.setDate(current.getDate() + 1);
-            continue;
           }
+        } else if (recurrencePattern === "sameDay") {
+          // recur on same day-of-month for X months
+          let current = new Date(startDate);
 
-          const start = new Date(current);
-          const end = new Date(current);
-          end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
+          for (let i = 0; i < recurrenceCount; i++) {
+            if (current < now) {
+              current.setMonth(current.getMonth() + 1);
+              continue;
+            }
 
-          eventsToInsert.push({
-            ...eventData,
-            start,
-            end,
-          });
+            const start = new Date(current);
+            const end = new Date(current);
+            end.setHours(endDate.getHours(), endDate.getMinutes(), 0);
 
-          current.setDate(current.getDate() + 1);
+            eventsToInsert.push({
+              ...eventData,
+              start,
+              end,
+            });
+
+            current.setMonth(current.getMonth() + 1);
+          }
         }
       } else {
         // Non-recurring: just insert once
@@ -164,9 +219,7 @@ async function run() {
       }
 
       if (eventsToInsert.length === 0) {
-        return res
-          .status(400)
-          .json({ message: "No events to insert (dates in past?)" });
+        return res.status(400).json({ message: "No events to insert" });
       }
 
       const result = await eventsCollection.insertMany(eventsToInsert);
